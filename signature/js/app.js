@@ -1,87 +1,90 @@
-var wrapper = document.getElementById("signature-pad");
-var clearButton = wrapper.querySelector("[data-action=clear]");
-var undoButton = wrapper.querySelector("[data-action=undo]");
-var saveButton = wrapper.querySelector("[data-action=save]");
-var canvas = wrapper.querySelector("canvas");
-var signaturePad = new SignaturePad(canvas);
+let wrapper = document.getElementById("signature-pad");
+let clearButton = wrapper.querySelector("[data-action=clear]");
+let downloadButton = wrapper.querySelector("[data-action=download]");
+let canvas = wrapper.querySelector("canvas");
+let signaturePad = new SignaturePad(canvas);
 
-// Adjust canvas coordinate space taking into account pixel ratio,
-// to make it look crisp on mobile devices.
-// This also causes canvas to be cleared.
-function resizeCanvas() {
-  // When zoomed out to less than 100%, for some very strange reason,
-  // some browsers report devicePixelRatio as less than 1
-  // and only part of the canvas is cleared then.
-  var ratio =  Math.max(window.devicePixelRatio || 1, 1);
-
-  // This part causes the canvas to be cleared
-  canvas.width = canvas.offsetWidth * ratio;
-  canvas.height = canvas.offsetHeight * ratio;
-  canvas.getContext("2d").scale(ratio, ratio);
-
-  // This library does not listen for canvas changes, so after the canvas is automatically
-  // cleared by the browser, SignaturePad#isEmpty might still return false, even though the
-  // canvas looks empty, because the internal data of this library wasn't cleared. To make sure
-  // that the state of this library is consistent with visual state of the canvas, you
-  // have to clear it manually.
-  signaturePad.clear();
-}
-
-// On mobile devices it might make more sense to listen to orientation change,
-// rather than window resize events.
 window.onresize = resizeCanvas;
 resizeCanvas();
 
-function download(dataURL, filename) {
-  var blob = dataURLToBlob(dataURL);
-  var url = window.URL.createObjectURL(blob);
-
-  var a = document.createElement("a");
-  a.style = "display: none";
-  a.href = url;
-  a.download = filename;
-
-  document.body.appendChild(a);
-  a.click();
-
-  window.URL.revokeObjectURL(url);
-}
-
-// One could simply use Canvas#toBlob method instead, but it's just to show
-// that it can be done using result of SignaturePad#toDataURL.
-function dataURLToBlob(dataURL) {
-  // Code taken from https://github.com/ebidel/filer.js
-  var parts = dataURL.split(';base64,');
-  var contentType = parts[0].split(":")[1];
-  var raw = window.atob(parts[1]);
-  var rawLength = raw.length;
-  var uInt8Array = new Uint8Array(rawLength);
-
-  for (var i = 0; i < rawLength; ++i) {
-    uInt8Array[i] = raw.charCodeAt(i);
-  }
-
-  return new Blob([uInt8Array], { type: contentType });
-}
-
 clearButton.addEventListener("click", function (event) {
-  signaturePad.clear();
+    signaturePad.clear();
 });
 
-undoButton.addEventListener("click", function (event) {
-  var data = signaturePad.toData();
+downloadButton.addEventListener("click", function (event) {
+    if (signaturePad.isEmpty()) {
+        alert("Please provide a signature first.");
+    } else {
+        let croppedCanvas = cropSignatureCanvas(canvas);
 
-  if (data) {
-    data.pop(); // remove the last dot or line
-    signaturePad.fromData(data);
-  }
+        download(croppedCanvas, "signature.png");
+    }
 });
 
-saveButton.addEventListener("click", function (event) {
-  if (signaturePad.isEmpty()) {
-    alert("Please provide a signature first.");
-  } else {
-    var dataURL = signaturePad.toDataURL();
-    download(dataURL, "signature.png");
-  }
-});
+function resizeCanvas() {
+    let ratio =  Math.max(window.devicePixelRatio || 1, 1);
+
+    canvas.width = canvas.offsetWidth * ratio;
+    canvas.height = canvas.offsetHeight * ratio;
+    canvas.getContext("2d").scale(ratio, ratio);
+
+    signaturePad.clear();
+}
+
+function download(canvas, filename) {
+    canvas.toBlob((blob) => {
+        let a = document.createElement("a");
+        let url = URL.createObjectURL(blob);
+
+        a.href = url;
+        a.download = filename;
+
+        document.body.appendChild(a);
+        a.click();
+
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    });
+}
+
+// From: https://github.com/szimek/signature_pad/issues/49#issuecomment-260976909
+function cropSignatureCanvas(canvas) {
+    // First duplicate the canvas to not alter the original
+    let croppedCanvas= document.createElement('canvas');
+    let croppedContext= croppedCanvas.getContext('2d');
+
+    croppedCanvas.width = canvas.width;
+    croppedCanvas.height = canvas.height;
+    croppedContext.drawImage(canvas, 0, 0);
+
+    // Next do the actual cropping
+    let width= croppedCanvas.width;
+    let height= croppedCanvas.height;
+    let pixels= { x: [], y: [] };
+    let imageData= croppedContext.getImageData(0, 0, croppedCanvas.width, croppedCanvas.height);
+
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            let index = (y * width + x) * 4;
+
+            if (imageData.data[index + 3] > 0) {
+                pixels.x.push(x);
+                pixels.y.push(y);
+            }
+        }
+    }
+    pixels.x.sort((a, b) => a - b);
+    pixels.y.sort((a, b) => a - b);
+
+    let key= pixels.x.length - 1;
+    width = pixels.x[key] - pixels.x[0];
+    height = pixels.y[key] - pixels.y[0];
+
+    let cut= croppedContext.getImageData(pixels.x[0], pixels.y[0], width, height);
+
+    croppedCanvas.width = width;
+    croppedCanvas.height = height;
+    croppedContext.putImageData(cut, 0, 0);
+
+    return croppedCanvas;
+}
